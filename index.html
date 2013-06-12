@@ -1,0 +1,309 @@
+<html>
+  
+  <title>3DTD</title>
+  <head>
+    <script src="lib/jquery-1.7.1.min.js"></script>
+    <script src="lib/three.min.js"></script>
+    <script src="lib/stats.min.js"></script>
+    <script src="lib/CSS3DRenderer.js"></script>
+    <script src="lib/leap.min.js"></script>
+    <script src="lib/Tween.js"></script>
+    <script src="lib/dat.gui.min.js"></script>
+      
+
+  </head>
+
+  <style>
+
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      background-color: #000000;
+      margin: 0;
+      font-family: Arial;
+      overflow: hidden;
+    }
+
+    .selected {
+      border: 4px solid #8dc049; /* stroke */
+      border-radius: 12px; /* border radius */
+      background-color: #99c947; /* layer fill content */
+    }
+
+    .titleOfReddit {
+
+      font-size:50px;
+      color:#fff;
+      text-decoration:underline;
+      
+    }
+
+    p{  
+
+      color:#fff;
+      font-size:20px;
+      padding-left:5px;
+        
+    }
+
+    #scrollerMarkers{
+
+      position:absolute;
+      left:20px;
+      top:0px;
+      width:50px;
+      display:block;
+      background:#00f;
+
+
+    }
+
+    .scrollMarker{
+
+      border: 1px solid #8dc049;
+      position:absolute;
+      width:20px;
+      height:20px;
+      border-radius:10px;
+      display:block;
+      background:none;
+
+    }
+
+    .selectedMarker{
+      background:#8dc049;
+    }
+
+  </style>
+
+  <body>
+    <div id="backgroundRenderer"></div>
+    <div id="container"></div>
+    <div id="scrollerMarkers"></div>
+  </body>
+
+  <script>
+
+    /*
+      
+      GLOBAL VARIABLES
+
+    */
+
+
+    //THE REDDITS
+    var redditsToLoad = [
+      "aww",
+      "pics",
+      "grumpyCat",
+      "dogPictures",
+      "memes",
+    ]
+
+    //The number of reddits that will be pulled in from the JSON call.
+    //It is important to note that this is not the number of slides
+    //That will be created, because this program will only use
+    //images from i.imgur.com
+    var redditBufferNumber = 500;
+
+    //number of subreddits that have been loaded
+    var loaded = 0;
+
+    //THREE.js Variables
+    var camera,scene,clock,
+    backgroundRenderer,backgroundScene,backgroundCamera
+
+    //This is the array that will hold the arrays of all the loaded reddits
+    var reddits = [];
+
+    // array to hold all of the 'scrollers'
+    var scrollers = [];
+
+    //array to hold the scroller markers
+    var scrollerMarkers = [];
+
+    //the scroller we are currently looking at
+    var currentScroller = 0;
+
+    //The leap controller
+    var controller;
+
+    //selected object
+    var closestObject;
+
+    //Object that is being viewed
+    var beingViewedObject;
+
+    //Object used to measure closesness of tiles
+    var frameMarker;
+
+    //Used to make sure that once something is moving,
+    //we don't call anything else
+    var tweening = false;
+
+    //Used to keep track of old frame
+    var lastFrame;
+
+
+    /*
+
+      Layout and Feel Variables
+
+    */
+
+    //Space between different levels of the scroller.
+    var spaceBetweenScrollers = 1000;
+
+    //Number of images high the scroller will be
+    var scrollerHeight = 3;
+
+    var tileHeight = 150;
+    var tileWidth = 150;
+
+    var spacingHeight = 50;
+    var spacingWidth = 50;
+
+    //variable that defines how fast the images will slow to a stop
+    var DAMPENING = .95;
+
+    /*
+  
+      Interaction variables
+
+    */
+
+    var directionDifferenceCutoff = .85;
+    var velocityForVerticalSwipe = 1500;
+    var palmNormalForHorizontalSwipe = .75;
+    var swipeDivision = 1000;
+
+
+    var PARAMS = function(){
+     
+      this.interactionMode = "motionBased";
+
+            
+      //Creates the physical momentum of the tiles
+      this.dampening = .95;
+      
+      //Augments the movements for the hand motion
+      //To have more precision, or reach more tiles
+      this.movement = 5; 
+
+      this.velocityBased = {
+
+        divisionFactor:30,
+        verticalSwipeSpeed:1000,
+        verticalSwipeDirection:.9
+
+
+      };
+
+      this.momentumBased = {
+
+        divisionFactor:1000,
+        palmNormalForHorizontalSwipe:.75,
+        verticalSwipeSpeed:1000,
+        verticalSwipeDirection:.9
+
+      };
+
+      this.motionBased = {
+
+        translationFactor:2,
+        verticalSwipeSpeed:30,
+
+      };
+
+      this.grabBased = {
+
+        translationFactor:2,
+        verticalSwipeSpeed:10,
+
+      };
+
+
+
+    }
+
+    var params = new PARAMS();
+
+    var gui = new dat.GUI();
+
+    gui.add(params,'interactionMode',[
+          
+      'velocityBased',
+      'momentumBased',
+      'motionBased',
+      'grabBased',
+
+    ]).onFinishChange(function(value){
+      //TODO: Create explination of each
+      //interaction mode, that will be added to the body
+    });
+
+    gui.add(params,'dampening',.7,.99).listen();
+    gui.add(params,'movement',1,10).listen();
+
+
+
+    var velBased = gui.addFolder('Velocity Based');
+
+    velBased.add(params.velocityBased,'divisionFactor',0,200).listen();
+    velBased.add(params.velocityBased,'verticalSwipeSpeed',0,2000).listen();
+    velBased.add(params.velocityBased,'verticalSwipeDirection',0,1).listen();
+
+
+    var momBased = gui.addFolder('Momentum Based');
+
+    momBased.add(params.momentumBased,'divisionFactor',0,2000).listen();
+    momBased.add(params.momentumBased,'palmNormalForHorizontalSwipe',0,1).listen();
+    momBased.add(params.momentumBased,'verticalSwipeSpeed',0,2000).listen();
+    momBased.add(params.momentumBased,'verticalSwipeDirection',0,1).listen();
+
+    var motBased = gui.addFolder('Motion Based');
+
+    motBased.add(params.motionBased,'translationFactor',0,5).listen();
+    motBased.add(params.motionBased,'verticalSwipeSpeed',0,100).listen();
+
+    var grBased = gui.addFolder('Grab Based');
+
+    grBased.add(params.grabBased,'translationFactor',0,5).listen();
+    grBased.add(params.grabBased,'verticalSwipeSpeed',0,100).listen();
+
+      
+  </script>
+
+  <!-- Interaction Modes -->
+  <script src="interactions/velocityBased.js"></script>
+  <script src="interactions/momentumBased.js"></script>
+  <script src="interactions/motionBased.js"></script>
+  <script src="interactions/grabBased.js"></script>
+
+  <!--Script to load the reddits -->
+  <script src="js/load.js"></script>
+
+  <!-- Script to create the SCROLLER objects -->
+  <script src="js/scroller.js"></script>
+
+  <!-- Initializes the THREE Scene, as well as scrollers and Leap -->
+  <script src="js/init.js"></script>
+
+  <!-- extra functions used throughout the app -->
+  <script src="js/utils.js"></script>
+
+  <script>
+
+    //This function starts the reddits loading, 
+    //which in turn call the init function, 
+    //once all of the reddits have been loaded.
+    letThereBeLight();
+
+  </script>
+
+
+
+</html>
